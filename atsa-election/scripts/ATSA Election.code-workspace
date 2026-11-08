@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "../../../ATSA Election"
+		},
+		{
+			"path": "../public"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../src"
+		},
+		{
+			"path": "../tests"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "public"
+		},
+		{
+			"path": "scripts"
+		},
+		{
+			"path": "src"
+		},
+		{
+			"path": "tests"
+		}
+	]
+}
