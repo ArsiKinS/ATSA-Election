@@ -1,6 +1,6 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import DateTimeField from './DateTimeField';
 
 const post = (b: unknown) => fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
@@ -9,6 +9,10 @@ async function shrink(file: File, max: number, type: string) {
   const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
   c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height);
   return c.toDataURL(type, 0.85);
+}
+async function safeImage(file: File, max: number, type: string) {
+  try { return await shrink(file, max, type); }
+  catch { alert('This picture could not be read. Please choose a JPG or PNG file. (iPhone HEIC photos do not open in Chrome: export it as JPG first.)'); return null; }
 }
 type Act = (b: unknown, ok?: string) => Promise<boolean>;
 
@@ -20,15 +24,21 @@ export default function AdminApp() {
     setS(await r.json());
   }, []);
   useEffect(() => { load(); }, [load]);
+  const [busy, setBusy] = useState(false), lock = useRef(false);
   const act: Act = async (b, ok = 'Saved') => {
-    const r = await post(b), j = await r.json().catch(() => ({}));
-    setMsg({ ok: r.ok, t: r.ok ? (j.added !== undefined ? `Added ${j.added}, skipped ${j.rejected} invalid or duplicate` : ok) : j.error || 'Error' });
-    if (r.ok) await load();
-    return r.ok;
+    if (lock.current) return false; // ignore extra clicks while a save is running
+    lock.current = true; setBusy(true); setMsg({ ok: true, t: 'Saving… please wait' });
+    try {
+      const r = await post(b), j = await r.json().catch(() => ({}));
+      setMsg({ ok: r.ok, t: r.ok ? (j.added !== undefined ? `Added ${j.added}, skipped ${j.rejected} invalid or duplicate` : ok) : j.error || 'Error' });
+      if (r.ok) await load();
+      return r.ok;
+    } catch { setMsg({ ok: false, t: 'Network problem. Please try again.' }); return false; }
+    finally { lock.current = false; setBusy(false); }
   };
   if (!s) return <p>Loading…</p>;
   const can = (p: string) => s.me.perms.includes(p), locked = new Date() >= new Date(s.election.open_at);
-  return <div>
+  return <div aria-busy={busy} style={busy ? { pointerEvents: 'none', opacity: 0.6 } : undefined}>
     <div className="panel" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
       <span>{s.me.email}</span><span className="chip">{s.me.role.replace('_', ' ')}</span>
       <button className="btn alt sm" style={{ marginLeft: 'auto' }} onClick={async () => { await post({ action: 'logout' }); location.href = '/admin/login'; }}>Sign out</button></div>
@@ -68,7 +78,7 @@ function ElectionForm({ e, act }: { e: any; act: Act }) {
     <label>Description<textarea value={f.description} onChange={x => set('description', x.target.value)} /></label>
     <label>Announcement (shown on Home)<textarea value={f.announcement} onChange={x => set('announcement', x.target.value)} /></label>
     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>{(['color_primary', 'color_secondary', 'color_accent'] as const).map(k => <label key={k}>{k.replace('color_', '')}<br /><input type="color" value={f[k]} onChange={x => set(k, x.target.value)} /></label>)}</div>
-    <label>Logo (leave empty to keep the ATSA logo)<input type="file" accept="image/*" onChange={async x => { const fl = x.target.files?.[0]; if (fl) set('logo_data', await shrink(fl, 400, 'image/png')); }} /></label>
+    <label>Logo (leave empty to keep the ATSA logo)<input type="file" accept="image/*" onChange={async x => { const fl = x.target.files?.[0]; if (!fl) return; const ph = await safeImage(fl, 400, 'image/png'); if (ph) setF((o: any) => ({ ...o, logo_data: ph })); }} /></label>
     <DateTimeField label="Voting opens (Malaysia time)" value={f.open_at} onChange={v => set('open_at', v)} />
     <DateTimeField label="Voting closes (Malaysia time)" value={f.close_at} onChange={v => set('close_at', v)} />
     <DateTimeField label="Results announced (Malaysia time)" value={f.results_at} onChange={v => set('results_at', v)} />
@@ -94,9 +104,9 @@ function Candidates({ s, act, locked }: { s: any; act: Act; locked: boolean }) {
     <label>Name<input value={f.name} onChange={x => setF({ ...f, name: x.target.value })} disabled={locked} /></label>
     <label>About<textarea value={f.bio} onChange={x => setF({ ...f, bio: x.target.value })} disabled={locked} /></label>
     <label>Campaign statement<textarea value={f.manifesto} onChange={x => setF({ ...f, manifesto: x.target.value })} disabled={locked} /></label>
-    <label>Photo<input type="file" accept="image/*" disabled={locked} onChange={async x => { const fl = x.target.files?.[0]; if (fl) setF({ ...f, photo: await shrink(fl, 420, 'image/jpeg') }); }} /></label>
+    <label>Photo<input type="file" accept="image/*" disabled={locked} onChange={async x => { const fl = x.target.files?.[0]; if (!fl) return; const ph = await safeImage(fl, 420, 'image/jpeg'); if (ph) setF((o: any) => ({ ...o, photo: ph })); }} /></label>
     {f.photo && <div className="ph sm"><img src={f.photo} alt="" /></div>}
-    <div className="bar"><button className="btn" disabled={locked || !f.name.trim()} onClick={async () => { if (await act({ action: 'candidate.save', id: f.id, name: f.name, bio: f.bio, manifesto: f.manifesto, photo: f.photo })) setF(blank); }}>{f.id ? 'Save changes' : 'Add candidate'}</button>
+    <div className="bar"><button className="btn" disabled={locked || !f.name.trim()} onClick={async () => { if (!f.id && s.candidates.some((c: any) => c.name.trim().toLowerCase() === f.name.trim().toLowerCase()) && !confirm('A candidate with this name already exists. Add another one?')) return; if (await act({ action: 'candidate.save', id: f.id, name: f.name, bio: f.bio, manifesto: f.manifesto, photo: f.photo })) setF(blank); }}>{f.id ? 'Save changes' : 'Add candidate'}</button>
       {f.id && <button className="btn alt" onClick={() => setF(blank)}>Cancel</button>}</div></div>;
 }
 
