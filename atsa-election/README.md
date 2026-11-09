@@ -54,3 +54,5 @@ Vercel + Neon (or any PostgreSQL). See README.th.md. Run `schema.sql` once, set 
 
 ## Not included (compared with the original brief)
 Tailwind/shadcn/Recharts (plain CSS and CSS bars instead), PDF report (CSV only), several elections at once, admin UI in Thai, automated backups (use your database provider's: Neon point-in-time restore or `pg_dump`).
+
+
