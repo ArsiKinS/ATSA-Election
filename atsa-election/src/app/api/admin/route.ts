@@ -35,17 +35,20 @@ const counts = async () => (await q<{ eligible: number; issued: number; ballots:
 
 export const GET = handler(async () => {
   const me = await requireAdmin('stats:view'), perms = PERMS[me.role];
-  const e = await getElection();
-  if (!e) throw new HttpError(404, 'No election found. Run: npm run seed');
-  const out: Record<string, unknown> = {
-    me: { email: me.email, role: me.role, perms }, election: e, status: statusOf(e), stats: await counts(),
-    positions: await q('SELECT id,name_en,name_th FROM positions ORDER BY sort,id'),
-    candidates: await q('SELECT id,name,bio,manifesto,photo FROM candidates ORDER BY sort,id'),
-  };
-  if (process.env.APP_URL) out.qr = await QRCode.toString(process.env.APP_URL + '/vote', { type: 'svg', margin: 1 });
-  if (perms.includes('admins:manage')) out.admins = await q('SELECT id,email,role FROM admins ORDER BY id');
-  if (perms.includes('audit:view')) {
-    const all = await q<{ id: number; at: Date; actor: string; action: string; details: string; prev_hash: string; hash: string }>('SELECT * FROM audit_log ORDER BY id');
+  const [e, stats, positions, candidates, admins, all, qr] = await Promise.all([
+    getElection(),
+    counts(),
+    q('SELECT id,name_en,name_th FROM positions ORDER BY sort,id'),
+    q('SELECT id,name,bio,manifesto,photo FROM candidates ORDER BY sort,id'),
+    perms.includes('admins:manage') ? q('SELECT id,email,role FROM admins ORDER BY id') : Promise.resolve(undefined),
+    perms.includes('audit:view') ? q<{ id: number; at: Date; actor: string; action: string; details: string; prev_hash: string; hash: string }>('SELECT * FROM audit_log ORDER BY id') : Promise.resolve(undefined),
+    process.env.APP_URL ? QRCode.toString(process.env.APP_URL + '/vote', { type: 'svg', margin: 1 }) : Promise.resolve(undefined),
+  ]);
+  if (!e) throw new HttpError(404, 'No election found. Run the first-time setup.');
+  const out: Record<string, unknown> = { me: { email: me.email, role: me.role, perms }, election: e, status: statusOf(e), stats, positions, candidates };
+  if (qr) out.qr = qr;
+  if (admins) out.admins = admins;
+  if (all) {
     let prev = '', ok = true;
     for (const r of all) { if (r.prev_hash !== prev || r.hash !== chain(prev, r.at.toISOString(), r.actor, r.action, r.details)) ok = false; prev = r.hash; }
     out.audit = { chainOk: ok, rows: all.slice(-100).reverse().map(r => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, details: r.details })) };
