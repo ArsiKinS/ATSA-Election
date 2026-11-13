@@ -1,13 +1,9 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATSA key generator</title>
-<style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 16px}textarea{width:100%;height:90px;font-family:monospace;font-size:12px}button{font-size:16px;padding:10px 18px}</style></head><body>
-<h1>Key generator</h1><p>Runs only in your browser. Nothing is uploaded. Generate once, copy the three values into your hosting settings (Vercel → Settings → Environment Variables), and <b>never put them on GitHub</b>.</p>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATSA secret generator</title>
+<style>body{font-family:system-ui;max-width:720px;margin:24px auto;padding:0 16px}textarea{width:100%;height:60px;font-family:monospace;font-size:13px}button{font-size:16px;padding:10px 18px}</style></head><body>
+<h1>Secret generator</h1><p>Runs only in your browser. Nothing is uploaded. Copy the two values into your hosting settings (Vercel → Settings → Environment Variables) and <b>never put them on GitHub</b>.</p>
 <button id="go">Generate</button>
-<h3>SESSION_SECRET</h3><textarea id="a" readonly></textarea><h3>SETUP_TOKEN</h3><textarea id="b" readonly></textarea><h3>BLIND_KEY_B64</h3><textarea id="c" readonly></textarea>
+<h3>SESSION_SECRET</h3><textarea id="a" readonly></textarea><h3>SETUP_TOKEN (used once, for the first admin)</h3><textarea id="b" readonly></textarea>
 <script>
 const hex=n=>Array.from(crypto.getRandomValues(new Uint8Array(n)),x=>x.toString(16).padStart(2,'0')).join('');
-document.getElementById('go').onclick=async()=>{
- const k=await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);
- const jwk=await crypto.subtle.exportKey('jwk',k.privateKey);
- a.value=hex(32);b.value=hex(16);c.value=btoa(JSON.stringify(jwk));
-};
+document.getElementById('go').onclick=()=>{a.value=hex(32);b.value=hex(16)};
 </script></body></html>

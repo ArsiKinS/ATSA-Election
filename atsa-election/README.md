@@ -1,58 +1,37 @@
-# ATSA Board Election
+# ATSA Board Election (polling-station version)
 
-Secret-ballot online election for the AIU Thai Student Association. Next.js 15 + TypeScript + PostgreSQL.
-Public site (English/Thai switch) and admin area are separate: different layouts, different login cookies, server-side roles.
+Secret-ballot election for the AIU Thai Student Association. Next.js 15 + TypeScript + PostgreSQL.
+Voters use **one computer at the polling station**; staff check names on the voter list. Admin and voter areas are separate.
+Thai guide: **[README.th.md](README.th.md)**
 
-**Thai step-by-step guide: [README.th.md](README.th.md)**
-
-## How voting works
-1. Admin imports the voter emails. The voter enters their email and gets a one-time sign-in link.
-2. The browser makes a random token, **blinds** it, and asks the server to sign the blinded value (RSA blind signature).
-   The server records only that this voter received one signature (`voters.blinded_msg`). It never sees the token.
-3. The browser removes the blinding and later submits `token + signature + choices` **without cookies**.
-   The server checks the signature and stores the ballot with no voter id and no timestamp. A reused token hits a UNIQUE constraint.
-4. Positions are voted one at a time (President first). Counting is sequential: someone who wins an earlier position is removed from later ones.
-   A tie stops the count so the committee decides.
-5. Results are never queried or sent to browsers until published (manually, or automatically after verification at the announcement time).
-
-Code: `src/lib/blind.ts` (blind signatures), `src/app/api/vote/*` (credential + anonymous submit), `src/lib/rounds.ts` (counting), `schema.sql`.
-
-## Roles
-| Role | Can do |
-|---|---|
-| Super Admin | everything, including admin accounts and publishing |
-| Election Committee | election settings, branding, positions, candidates, voter list, audit view |
-| Results Manager | verify and publish results, audit view |
-
-Positions, candidates and the voter list lock automatically when voting opens. Every admin action is written to a hash-chained, append-only audit log (the database also blocks UPDATE/DELETE).
+## How it works
+- An admin signs in on the polling-station computer and presses **Open ballot on this computer**. That computer receives a signed kiosk cookie and the admin is signed out of it. Only that computer can submit ballots; anyone else who opens the link sees "voting takes place at the polling station".
+- Ballot: choose **1 President** (from candidates marked "Runs for President") then **N board members** (default 3, from candidates marked "Competes for the board"; the chosen President cannot also be picked). After Submit, the screen resets for the next voter; an unfinished ballot clears after 90 seconds without touches.
+- **Online voting for a few approved members:** the committee creates one-time codes in the admin page (**Online voting**), sends each code privately to one approved member, and keeps its own note of who got which code. The member opens the site, enters the code and fills in the same ballot. Only a hash of each code is stored; the system never records names, and a code is marked used inside the same database transaction as the ballot, with no link kept between them. Online and polling-station ballots share the same ballot limit.
+- The ballot is stored with **no name, email, time or device id**. Admins set a **ballot limit**; the server refuses more ballots than that (exact even with simultaneous submits).
+- Counting (`src/lib/outcome.ts`): President = most votes. If exactly two ran for President, the other becomes **Assistant Secretary**. Board = the N candidates with most votes, not counting the President or Assistant Secretary. Ties are reported, never broken by software.
+- **Admins** (Super Admin, Results Manager) see counts and percentages only after voting closes. The **public** sees only the President, the Assistant Secretary and the board members, never numbers, and only after results are verified and published (manually or automatically at the announcement time).
+- Roles: Super Admin (everything), Election Committee (settings, candidates, kiosk), Results Manager (verify/publish, results). Candidates and the schedule lock when voting opens. Every admin action goes to a hash-chained append-only audit log.
 
 ## Run locally
 ```
 npm install
-npm run keys                 # paste SESSION_SECRET and BLIND_KEY_B64 into .env.local (copy .env.example)
-npm run migrate              # creates tables
-npm run seed -- --demo --open   # demo candidates, 5 demo voters, voting open
-npm run dev                  # http://localhost:3000   (sign-in links print in the terminal when no email is configured)
+npm run keys            # copy SESSION_SECRET and SETUP_TOKEN into .env.local (see .env.example)
+npm run migrate         # creates tables from schema.sql
+npm run seed -- --demo --open     # 9 demo candidates (2 for President), voting open
+npm run dev
 ```
-Admin: `/admin/login` (or run `/admin/setup` on a fresh database).
+Then `/admin/setup` (first admin) → `/admin` → Open ballot on this computer → `/vote`.
+
+## Upgrading a database made with the previous (email) version
+Run `migrate-v2.sql`, then `migrate-v3.sql` (online codes), once each in the Neon SQL Editor (both are safe to run twice). Tested: old schema + v2 + v3 passes the full end-to-end test. If v3 is forgotten the admin page still works and tells you to run it.
 
 ## Tests
-- `npm test`: blind-signature round trip, key compatibility with keygen.html, sequential counting and tie rules.
-- `npm run e2e`: against a running server (`npm run build && npm start -- -p 3100`, output saved to /tmp/server.log):
-  sign-in, one credential per voter, double vote rejected, forged signature rejected, CSRF check, hidden results.
+`npm test` (counting rules) and, with the server running (`npm run build && npm start -- -p 3100`), `npm run e2e` (kiosk access, ballot rules, limit, hidden results, no identity columns, admin-only numbers, audit chain).
 
-## Deploy
-Vercel + Neon (or any PostgreSQL). See README.th.md. Run `schema.sql` once, set the environment variables, open `/admin/setup`.
-
-## Privacy and security notes (read before relying on it)
-- Identity and ballots are in separate tables with no shared value. Ballots have no timestamp or IP. Verified in the end-to-end run: no row of `ballots` matches any value in `voters`.
-- Not protected against: someone who controls the server code or both the database and hosting logs. Sign-in time (`login_tokens.created_at`) and hosting request logs could be correlated with ballot insertion order by such a person. Delete `login_tokens` after the election, switch off request logging where you can, and keep admin accounts few.
-- Anyone who can read a voter's mailbox can vote as that voter.
-- If a voter clears browser data after receiving a ballot and before submitting, the credential cannot be re-issued safely (the server cannot tell whether it was already used). The committee must decide how to handle that.
-- Login rate limiting is per account in the database. Add Vercel's firewall/rate limits for general abuse.
-- This has not had an independent security review. Rehearse on a separate copy, and have someone else read the code before a real election.
-
-## Not included (compared with the original brief)
-Tailwind/shadcn/Recharts (plain CSS and CSS bars instead), PDF report (CSV only), several elections at once, admin UI in Thai, automated backups (use your database provider's: Neon point-in-time restore or `pg_dump`).
-
-
+## Limits to know about
+- The software cannot know who stands at the computer. **Staff must check each voter against the list.** Reconcile at the end: ballots cast must not exceed names ticked.
+- Online voters vote unsupervised: nobody can check who is beside them, and a code can be handed to someone else. Create exactly as many codes as approved members. Someone with full database access could in theory match the order of rows to the order codes were used.
+- Ballots are anonymous by construction, but the committee must keep the voter list and the ballot box separate in practice.
+- Not independently security-reviewed. Rehearse on a separate database first.
+- Not included: the "female-side Assistant Secretary" seat (rules not yet defined), PDF export (CSV only), several elections at once, Thai admin screens, automated backups (use Neon restore or `pg_dump`).

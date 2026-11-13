@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 const key = () => new TextEncoder().encode(process.env.SESSION_SECRET ?? '');
-type Name = 'voter' | 'admin';
+type Name = 'voter' | 'admin' | 'kiosk';
 export async function setSession(name: Name, payload: Record<string, unknown>, maxAge: number) {
   if ((process.env.SESSION_SECRET ?? '').length < 32) throw new Error('SESSION_SECRET must be at least 32 characters');
   const jwt = await new SignJWT(payload).setProtectedHeader({ alg: 'HS256' }).setIssuedAt().setExpirationTime(`${maxAge}s`).sign(key());

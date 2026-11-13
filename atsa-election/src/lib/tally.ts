@@ -1,11 +1,13 @@
 import { q } from './db';
-import { computeRounds, type Cand, type Count, type Pos } from './rounds';
+import { getElection } from './election';
+import { computeOutcome, type Cand, type Count } from './outcome';
 export async function tally() {
-  const [pos, cands, counts, st] = await Promise.all([
-    q<Pos>('SELECT id,name_en,name_th FROM positions ORDER BY sort,id'),
-    q<Cand>('SELECT id,name,photo FROM candidates ORDER BY sort,id'),
-    q<Count>('SELECT position_id,candidate_id,count(*)::int AS n FROM ballot_choices GROUP BY 1,2'),
-    q<{ ballots: number; eligible: number }>('SELECT (SELECT count(*)::int FROM ballots) ballots,(SELECT count(*)::int FROM voters) eligible'),
+  const [e, cands, pres, board, b] = await Promise.all([
+    getElection(),
+    q<Cand>('SELECT id,name,photo,for_president,for_board FROM candidates ORDER BY sort,id'),
+    q<Count>('SELECT president_id AS id,count(*)::int AS n FROM ballots WHERE president_id IS NOT NULL GROUP BY 1'),
+    q<Count>('SELECT candidate_id AS id,count(*)::int AS n FROM ballot_board GROUP BY 1'),
+    q<{ n: number }>('SELECT count(*)::int n FROM ballots WHERE president_id IS NOT NULL'),
   ]);
-  return { ...st[0], rounds: computeRounds(pos, cands, counts) };
+  return { ballots: b[0].n, cands, outcome: computeOutcome(cands, pres, board, e?.board_seats ?? 3) };
 }

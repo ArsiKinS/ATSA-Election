@@ -17,20 +17,19 @@ async function safeImage(file: File, max: number, type: string) {
 type Act = (b: unknown, ok?: string) => Promise<boolean>;
 
 export default function AdminApp() {
-  const [s, setS] = useState<any>(null), [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
+  const [s, setS] = useState<any>(null), [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null), [busy, setBusy] = useState(false), lock = useRef(false);
   const load = useCallback(async () => {
     const r = await fetch('/api/admin', { cache: 'no-store' });
     if (r.status === 401) { location.href = '/admin/login'; return; }
     setS(await r.json());
   }, []);
   useEffect(() => { load(); }, [load]);
-  const [busy, setBusy] = useState(false), lock = useRef(false);
   const act: Act = async (b, ok = 'Saved') => {
     if (lock.current) return false; // ignore extra clicks while a save is running
     lock.current = true; setBusy(true); setMsg({ ok: true, t: 'Saving… please wait' });
     try {
       const r = await post(b), j = await r.json().catch(() => ({}));
-      setMsg({ ok: r.ok, t: r.ok ? (j.added !== undefined ? `Added ${j.added}, skipped ${j.rejected} invalid or duplicate` : ok) : j.error || 'Error' });
+      setMsg({ ok: r.ok, t: r.ok ? ok : j.error || 'Error' });
       if (r.ok) await load();
       return r.ok;
     } catch { setMsg({ ok: false, t: 'Network problem. Please try again.' }); return false; }
@@ -44,11 +43,12 @@ export default function AdminApp() {
       <button className="btn alt sm" style={{ marginLeft: 'auto' }} onClick={async () => { await post({ action: 'logout' }); location.href = '/admin/login'; }}>Sign out</button></div>
     {msg && <div className={'note' + (msg.ok ? '' : ' r')} role="status">{msg.t}</div>}
     <Overview s={s} act={act} can={can} />
+    {can('kiosk:open') && <Kiosk act={act} />}
+    {can('remote:manage') && <Remote s={s} reload={load} setMsg={setMsg} />}
+    {s.results && <Results r={s.results} />}
     {can('election:edit') && <ElectionForm key={JSON.stringify(s.election).length} e={s.election} act={act} />}
-    {locked && can('candidates:edit') && <div className="note r">Voting has started, so positions, candidates and the voter list are locked.</div>}
-    {can('candidates:edit') && <Positions s={s} act={act} locked={locked} />}
+    {locked && can('candidates:edit') && <div className="note r">Voting has started, so candidates are locked.</div>}
     {can('candidates:edit') && <Candidates s={s} act={act} locked={locked} />}
-    {can('voters:edit') && <Voters s={s} act={act} locked={locked} />}
     {can('admins:manage') && <Admins s={s} act={act} />}
     {s.audit && <Audit a={s.audit} />}
   </div>;
@@ -58,27 +58,69 @@ function Overview({ s, act, can }: { s: any; act: Act; can: (p: string) => boole
   const e = s.election, st = s.stats, label: Record<string, string> = { upcoming: 'Upcoming', open: 'Voting open', closed: 'Voting closed', results: 'Results published' };
   return <div className="panel"><h2>Overview</h2>
     <p><span className="chip">{label[s.status]}</span></p>
-    <div className="stats" style={{ margin: '12px 0' }}><div><b>{st.eligible}</b><small>Eligible voters</small></div><div><b>{st.issued}</b><small>Ballots issued</small></div><div><b>{st.ballots}</b><small>Ballots cast</small></div></div>
+    <div className="stats" style={{ margin: '12px 0' }}><div><b>{st.ballots}</b><small>Ballots cast</small></div><div><b>{st.max_ballots ?? '–'}</b><small>Ballot limit</small></div></div>
     {can('results:publish') && <>
       {s.status === 'open' && <p className="note">Results can be verified after voting closes.</p>}
-      {s.status === 'closed' && !e.verified_at && <button className="btn" onClick={() => confirm('Verify results? This checks that ballots do not exceed issued credentials.') && act({ action: 'results.verify' }, 'Results verified')}>Verify results</button>}
+      {s.status === 'closed' && !e.verified_at && <button className="btn" onClick={() => confirm('Verify results? This checks that ballots do not exceed the limit.') && act({ action: 'results.verify' }, 'Results verified')}>Verify results</button>}
       {e.verified_at && !e.published_at && <>
-        <p className="note">Verified. {e.auto_publish ? 'They will be published automatically at the announcement time.' : 'Auto-publish is off.'}</p>
-        <button className="btn" onClick={() => confirm('Publish the results to everyone now?') && act({ action: 'results.publish' }, 'Results published')}>Publish now</button></>}
-      {e.published_at && <p className="note">Results are published.</p>}</>}
-    {s.qr && <div className="qr" style={{ marginTop: 14 }}><b>Scan to open the vote page</b><div dangerouslySetInnerHTML={{ __html: s.qr }} /></div>}
+        <p className="note">Verified. {e.auto_publish ? 'The winners will be published automatically at the announcement time.' : 'Auto-publish is off.'}</p>
+        <button className="btn" onClick={() => confirm('Publish the winners to everyone now?') && act({ action: 'results.publish' }, 'Results published')}>Publish now</button></>}
+      {e.published_at && <p className="note">Winners are published. Vote counts are only shown here, to admins.</p>}</>}
+    {s.qr && <div className="qr" style={{ marginTop: 14 }}><b>Scan to open the website</b><div dangerouslySetInnerHTML={{ __html: s.qr }} /></div>}
   </div>;
 }
 
+function Remote({ s, reload, setMsg }: { s: any; reload: () => Promise<void>; setMsg: (m: { ok: boolean; t: string }) => void }) {
+  const [n, setN] = useState(5), [codes, setCodes] = useState<string[]>([]), [busy, setBusy] = useState(false), st = s.remote ?? { issued: 0, used: 0, missing: false };
+  async function call(body: unknown) {
+    setBusy(true); const r = await post(body), j = await r.json().catch(() => ({})); setBusy(false);
+    if (!r.ok) { setMsg({ ok: false, t: j.error || 'Error' }); return null; }
+    await reload(); return j;
+  }
+  return <div className="panel"><h2>Online voting (approved members)</h2>
+    {st.missing ? <p className="note r">The database needs one more step: run <b>migrate-v3.sql</b> in the Neon SQL Editor, then refresh this page.</p> : <>
+      <p style={{ margin: '8px 0' }}>For members who cannot come in person and whom the committee has approved. Each person gets one code. It works once and the ballot is counted in the same ballot limit. <b>Issued {st.issued} · used {st.used}</b></p>
+      <div className="fld"><label>How many codes to create<input type="number" min={1} max={50} value={n} onChange={x => setN(Math.max(1, Math.min(50, +x.target.value || 1)))} /></label></div>
+      <button className="btn" disabled={busy} onClick={async () => { const j = await call({ action: 'remote.generate', count: n }); if (j) setCodes(j.codes); }}>Create codes</button>
+      <button className="btn alt" disabled={busy || st.issued === st.used} onClick={async () => { if (confirm('Cancel every code that has not been used yet?') && (await call({ action: 'remote.cancel' }))) { setCodes([]); setMsg({ ok: true, t: 'Unused codes cancelled' }); } }}>Cancel unused codes</button>
+      {codes.length > 0 && <div style={{ marginTop: 12 }}>
+        <p className="note r"><b>Copy these now.</b> They are shown only once and are not saved anywhere. Send each code privately to one approved member, and keep your own private note of who received which code. The system never records names.</p>
+        <pre style={{ fontSize: 18, lineHeight: 1.8, userSelect: 'all' }}>{codes.join('\n')}</pre>
+        <button className="btn alt sm" onClick={() => navigator.clipboard?.writeText(codes.join('\n')).then(() => setMsg({ ok: true, t: 'Codes copied' }))}>Copy all</button></div>}
+    </>}
+  </div>;
+}
+
+function Kiosk({ act }: { act: Act }) {
+  return <div className="panel"><h2>Polling station computer</h2>
+    <p style={{ margin: '8px 0' }}>Use this on the computer at the polling station. It makes <b>this computer</b> the only one that can vote, and signs you out of the admin area so voters cannot reach it. To stop it later, sign in to admin again on this same computer and press “Stop voting on this computer”.</p>
+    <button className="btn" onClick={async () => { if (!confirm('Open the ballot on THIS computer? You will be signed out of admin here.')) return; const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'kiosk.open' }) }); if (r.ok) location.href = '/vote'; else alert((await r.json().catch(() => ({}))).error ?? 'Error'); }}>Open ballot on this computer</button>
+    <button className="btn alt" onClick={() => act({ action: 'kiosk.close' }, 'This computer can no longer vote')}>Stop voting on this computer</button></div>;
+}
+
+function Results({ r }: { r: any }) {
+  const pct = (v: number) => (r.ballots ? ((v / r.ballots) * 100).toFixed(1) : '0.0'), o = r.outcome, nm = (id: number) => r.cands.find((c: any) => c.id === id)?.name;
+  const T = ({ rows }: { rows: any[] }) => <table><thead><tr><th>Candidate</th><th>Votes</th><th>% of ballots</th></tr></thead><tbody>{rows.map(x => <tr key={x.id}><td>{x.name}</td><td>{x.votes}</td><td>{pct(x.votes)}%</td></tr>)}</tbody></table>;
+  return <div className="panel"><h2>Results (admins only)</h2>
+    <p className="note">Total ballots: <b>{r.ballots}</b></p>
+    <p><b>Outcome:</b> President: {o.president.status === 'won' ? nm(o.president.winner) : o.president.status === 'tie' ? 'TIE, committee decides' : 'no votes'}
+      {o.assistant ? ` · Assistant Secretary: ${nm(o.assistant)}` : ''} · Board: {o.board.members.map(nm).join(', ') || 'none'}{o.board.status === 'tie' ? ` · TIE for the last seat between ${o.board.tied.map(nm).join(', ')}` : ''}</p>
+    <h2 style={{ fontSize: 16 }}>President</h2><T rows={o.president.rows} />
+    <h2 style={{ fontSize: 16 }}>Board (President and Assistant Secretary not counted)</h2><T rows={o.board.rows} />
+    <div className="bar"><a className="btn alt" href="/api/admin/csv">Download CSV</a></div></div>;
+}
+
 function ElectionForm({ e, act }: { e: any; act: Act }) {
-  const [f, setF] = useState<any>({ ...e }), set = (k: string, v: unknown) => setF({ ...f, [k]: v });
+  const [f, setF] = useState<any>({ ...e }), set = (k: string, v: unknown) => setF((o: any) => ({ ...o, [k]: v }));
   const T = (k: string, label: string, props: any = {}) => <label>{label}<input value={f[k] ?? ''} onChange={x => set(k, props.type === 'number' ? +x.target.value : x.target.value)} {...props} /></label>;
   return <div className="panel fld"><h2>Election and branding</h2>
     {T('club_name', 'Club name')}{T('club_short', 'Short name')}{T('title', 'Title (English)')}{T('title_th', 'Title (Thai)')}{T('year', 'Year', { type: 'number' })}
+    {T('board_seats', 'Board seats (how many board members each voter picks and the winners)', { type: 'number', min: 1 })}
+    <label>Ballot limit (maximum number of voters; leave empty for no limit)<input type="number" min={1} value={f.max_ballots ?? ''} onChange={x => set('max_ballots', x.target.value === '' ? null : +x.target.value)} /></label>
     <label>Description<textarea value={f.description} onChange={x => set('description', x.target.value)} /></label>
     <label>Announcement (shown on Home)<textarea value={f.announcement} onChange={x => set('announcement', x.target.value)} /></label>
     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>{(['color_primary', 'color_secondary', 'color_accent'] as const).map(k => <label key={k}>{k.replace('color_', '')}<br /><input type="color" value={f[k]} onChange={x => set(k, x.target.value)} /></label>)}</div>
-    <label>Logo (leave empty to keep the ATSA logo)<input type="file" accept="image/*" onChange={async x => { const fl = x.target.files?.[0]; if (!fl) return; const ph = await safeImage(fl, 400, 'image/png'); if (ph) setF((o: any) => ({ ...o, logo_data: ph })); }} /></label>
+    <label>Logo (leave empty to keep the ATSA logo)<input type="file" accept="image/*" onChange={async x => { const fl = x.target.files?.[0]; if (!fl) return; const ph = await safeImage(fl, 400, 'image/png'); if (ph) set('logo_data', ph); }} /></label>
     <DateTimeField label="Voting opens (Malaysia time)" value={f.open_at} onChange={v => set('open_at', v)} />
     <DateTimeField label="Voting closes (Malaysia time)" value={f.close_at} onChange={v => set('close_at', v)} />
     <DateTimeField label="Results announced (Malaysia time)" value={f.results_at} onChange={v => set('results_at', v)} />
@@ -86,38 +128,26 @@ function ElectionForm({ e, act }: { e: any; act: Act }) {
     <button className="btn" onClick={() => { const { verified_at: _v, published_at: _p, ...rest } = f; act({ action: 'election.save', ...rest }); }}>Save</button></div>;
 }
 
-function Positions({ s, act, locked }: { s: any; act: Act; locked: boolean }) {
-  const [t, setT] = useState(s.positions.map((p: any) => `${p.name_en} | ${p.name_th}`).join('\n'));
-  return <div className="panel fld"><h2>Positions (in voting order)</h2>
-    <label>One per line: English | Thai<textarea value={t} onChange={x => setT(x.target.value)} disabled={locked} rows={9} /></label>
-    <button className="btn" disabled={locked} onClick={() => act({ action: 'positions.set', positions: t.split('\n').map((l: string) => l.trim()).filter(Boolean).map((l: string) => { const [en, th] = l.split('|'); return { name_en: en.trim(), name_th: (th ?? '').trim() }; }) })}>Save positions</button></div>;
-}
-
 function Candidates({ s, act, locked }: { s: any; act: Act; locked: boolean }) {
-  const blank = { id: undefined as number | undefined, name: '', bio: '', manifesto: '', photo: null as string | null };
+  const blank = { id: undefined as number | undefined, name: '', bio: '', manifesto: '', photo: null as string | null, for_president: false, for_board: true };
   const [f, setF] = useState<any>(blank);
   return <div className="panel fld"><h2>Candidates ({s.candidates.length})</h2>
-    {s.candidates.map((c: any) => <div key={c.id} className="rk"><span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name[0]}</span><b className="g">{c.name}</b>
+    {s.candidates.map((c: any) => <div key={c.id} className="rk"><span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name[0]}</span>
+      <div className="g"><b>{c.name}</b><br />{c.for_president && <span className="chip">President</span>} {c.for_board && <span className="chip">Board</span>}</div>
       <button className="btn alt sm" disabled={locked} onClick={() => setF(c)}>Edit</button>
       <button className="btn alt sm" disabled={locked} onClick={() => confirm(`Delete ${c.name}?`) && act({ action: 'candidate.delete', id: c.id })}>Delete</button></div>)}
     <h2 style={{ fontSize: 16 }}>{f.id ? 'Edit candidate' : 'Add candidate'}</h2>
     <label>Name<input value={f.name} onChange={x => setF({ ...f, name: x.target.value })} disabled={locked} /></label>
+    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={f.for_president} onChange={x => setF({ ...f, for_president: x.target.checked })} disabled={locked} /> Runs for President</label>
+    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={f.for_board} onChange={x => setF({ ...f, for_board: x.target.checked })} disabled={locked} /> Can be chosen as a board member (untick for the two presidential candidates)</label>
     <label>About<textarea value={f.bio} onChange={x => setF({ ...f, bio: x.target.value })} disabled={locked} /></label>
     <label>Campaign statement<textarea value={f.manifesto} onChange={x => setF({ ...f, manifesto: x.target.value })} disabled={locked} /></label>
     <label>Photo<input type="file" accept="image/*" disabled={locked} onChange={async x => { const fl = x.target.files?.[0]; if (!fl) return; const ph = await safeImage(fl, 420, 'image/jpeg'); if (ph) setF((o: any) => ({ ...o, photo: ph })); }} /></label>
     {f.photo && <div className="ph sm"><img src={f.photo} alt="" /></div>}
-    <div className="bar"><button className="btn" disabled={locked || !f.name.trim()} onClick={async () => { if (!f.id && s.candidates.some((c: any) => c.name.trim().toLowerCase() === f.name.trim().toLowerCase()) && !confirm('A candidate with this name already exists. Add another one?')) return; if (await act({ action: 'candidate.save', id: f.id, name: f.name, bio: f.bio, manifesto: f.manifesto, photo: f.photo })) setF(blank); }}>{f.id ? 'Save changes' : 'Add candidate'}</button>
-      {f.id && <button className="btn alt" onClick={() => setF(blank)}>Cancel</button>}</div></div>;
-}
-
-function Voters({ s, act, locked }: { s: any; act: Act; locked: boolean }) {
-  const [t, setT] = useState(''), [rm, setRm] = useState('');
-  return <div className="panel fld"><h2>Voter list ({s.stats.eligible})</h2>
-    <label>Paste emails (one per line, or separated by commas or spaces)<textarea value={t} onChange={x => setT(x.target.value)} disabled={locked} rows={6} /></label>
-    <button className="btn" disabled={locked || !t.trim()} onClick={async () => { if (await act({ action: 'voters.import', emails: t.split(/[\s,;]+/).filter(Boolean) })) setT(''); }}>Import emails</button>
-    <label style={{ marginTop: 14 }}>Remove one email<input value={rm} onChange={x => setRm(x.target.value)} disabled={locked} /></label>
-    <button className="btn alt" disabled={locked || !rm} onClick={async () => { if (await act({ action: 'voters.remove', email: rm })) setRm(''); }}>Remove</button>
-    <p className="note" style={{ marginTop: 12 }}>For privacy, this page shows only the number of voters, never who has voted.</p></div>;
+    <div className="bar"><button className="btn" disabled={locked || !f.name.trim()} onClick={async () => {
+      if (!f.id && s.candidates.some((c: any) => c.name.trim().toLowerCase() === f.name.trim().toLowerCase()) && !confirm('A candidate with this name already exists. Add another one?')) return;
+      if (await act({ action: 'candidate.save', id: f.id, name: f.name, bio: f.bio, manifesto: f.manifesto, photo: f.photo, for_president: f.for_president, for_board: f.for_board })) setF(blank);
+    }}>{f.id ? 'Save changes' : 'Add candidate'}</button>{f.id && <button className="btn alt" onClick={() => setF(blank)}>Cancel</button>}</div></div>;
 }
 
 function Admins({ s, act }: { s: any; act: Act }) {

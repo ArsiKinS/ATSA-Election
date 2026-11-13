@@ -10,6 +10,6 @@ export default function SiteFooter({ short, name, year }: { short: string; name:
       <div><h4><Bi en="Get help" th="ขอความช่วยเหลือ" /></h4><Link href="/help"><Bi en="How voting works" th="วิธีการโหวต" /></Link>{contact && <a href={`mailto:${contact}`}><Bi en="Contact the committee" th="ติดต่อคณะกรรมการ" /></a>}</div>
       <div><h4><Bi en="Organisation" th="หน่วยงาน" /></h4><span className="l">{name}</span><span className="l">Albukhary International University</span></div>
     </div>
-    <div className="base"><span>© {year} {short}</span><span><Bi en="Voter identity and ballots are stored separately." th="ข้อมูลผู้โหวตและบัตรเลือกตั้งถูกเก็บแยกกัน" /></span></div>
+    <div className="base"><span>© {year} {short}</span><span><Bi en="Ballots are anonymous: no name is stored with a vote." th="บัตรเลือกตั้งไม่ระบุตัวตน ไม่มีการเก็บชื่อไว้กับคะแนน" /></span></div>
   </div></footer>;
 }

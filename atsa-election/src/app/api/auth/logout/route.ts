@@ -1,3 +1,4 @@
-import { handler, json } from '@/lib/http';
-import { clearSession } from '@/lib/session';
-export const POST = handler(async () => { await clearSession('voter'); return json({ ok: true }); });
+// Retired: polling-station voting no longer uses emails or credentials, and public results show no numbers.
+const gone = () => new Response('Gone', { status: 410 });
+export const GET = gone;
+export const POST = gone;

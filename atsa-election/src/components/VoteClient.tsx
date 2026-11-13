@@ -1,83 +1,62 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { blind, big, unblind } from '@/lib/blind';
-import { useLang, useT } from './Lang';
 import BallotBox from './BallotBox';
-import type { Cand } from './CandidateGrid';
-type Pos = { id: number; name_en: string; name_th: string };
-type Cred = { token: string; r: string; blinded: string; sig?: string };
-type Phase = 'init' | 'signin' | 'sent' | 'vote' | 'review' | 'done' | 'lost' | 'error';
-const KEY = 'atsa-credential';
-const post = (url: string, body: unknown, anon = false) =>
-  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: anon ? 'omit' : 'same-origin', body: JSON.stringify(body) });
-const Av = ({ c }: { c: Cand }) => c.photo ? <img src={c.photo} alt="" /> : <>{c.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</>;
+import { useT } from './Lang';
+type C = { id: number; name: string; photo: string | null; bio: string; manifesto: string };
+type Phase = 'welcome' | 'president' | 'board' | 'review' | 'done';
+const Av = ({ c }: { c: C }) => c.photo ? <img src={c.photo} alt="" /> : <>{c.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</>;
 
-export default function VoteClient({ positions, candidates, n, e, signedIn, issued }: { positions: Pos[]; candidates: Cand[]; n: string; e: string; signedIn: boolean; issued: boolean }) {
-  const t = useT(), { lang } = useLang(), pn = (p: Pos) => (lang === 'th' && p.name_th ? p.name_th : p.name_en);
-  const [phase, setPhase] = useState<Phase>('init'), [cred, setCred] = useState<Cred | null>(null), [err, setErr] = useState('');
-  const [step, setStep] = useState(0), [sel, setSel] = useState<number[]>([]), [busy, setBusy] = useState(false), [email, setEmail] = useState('');
-  const ran = useRef(false), N = Math.min(positions.length, candidates.length), byId = (id: number) => candidates.find(c => c.id === id)!;
-
+// Polling-station ballot: welcome -> President (1) -> Board (N) -> review -> submit -> next voter.
+// Nothing is kept after a ballot is submitted, and an unfinished ballot is cleared after 90 seconds without touches.
+export default function VoteClient({ presidents, pool, seats, code }: { presidents: C[]; pool: C[]; seats: number; code?: string }) {
+  const t = useT(), [phase, setPhase] = useState<Phase>(code ? 'president' : 'welcome'), [pres, setPres] = useState<number | null>(null), [board, setBoard] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(''), touched = useRef(Date.now());
+  const reset = () => { setPres(null); setBoard([]); setErr(''); setPhase('welcome'); };
   useEffect(() => {
-    if (ran.current) return; ran.current = true;
-    (async () => {
-      try {
-        const nn = big(n), ee = big(e);
-        let c: Cred | null = null; try { c = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* ignore */ }
-        if (c?.sig) { setCred(c); setPhase('vote'); return; }
-        if (!signedIn) { setPhase('signin'); return; }
-        if (c && !issued) { c = null; localStorage.removeItem(KEY); } // leftover from an attempt that never reached the server
-        if (!c) {
-          if (issued) { setPhase('lost'); return; }
-          const b = await blind(nn, ee); c = { token: b.token, r: b.r, blinded: b.blinded };
-          localStorage.setItem(KEY, JSON.stringify(c)); // saved BEFORE asking, so a refresh can resume
-        }
-        const res = await post('/api/vote/credential', { blinded: c.blinded }), j = await res.json();
-        if (!res.ok) throw new Error(j.error);
-        c = { ...c, sig: await unblind(j.sig, c, nn, ee) };
-        localStorage.setItem(KEY, JSON.stringify(c)); setCred(c);
-        post('/api/auth/logout', {}).catch(() => {}); // from here on the server no longer knows who this browser is
-        setPhase('vote');
-      } catch (x) { setErr((x as Error).message); setPhase('error'); }
-    })();
-  }, [n, e, signedIn, issued]);
+    const bump = () => { touched.current = Date.now(); };
+    addEventListener('pointerdown', bump); addEventListener('keydown', bump);
+    const id = setInterval(() => { if (!code && phase !== 'welcome' && phase !== 'done' && Date.now() - touched.current > 90_000) reset(); }, 1000);
+    return () => { removeEventListener('pointerdown', bump); removeEventListener('keydown', bump); clearInterval(id); };
+  }, [phase]);
+  useEffect(() => { if (phase !== 'done' || code) return; const id = setTimeout(reset, 8000); return () => clearTimeout(id); }, [phase]);
 
-  async function sendLink() { setBusy(true); await post('/api/auth/request', { email }); setBusy(false); setPhase('sent'); }
   async function submit() {
-    if (!cred?.sig) return;
+    if (pres === null || busy) return;
     setBusy(true); setErr('');
-    const r = await post('/api/vote/submit', { token: cred.token, sig: cred.sig, choices: sel }, true); // sent without cookies
-    if (r.ok || r.status === 409) { localStorage.removeItem(KEY); setPhase('done'); } else setErr((await r.json()).error ?? 'Error');
+    try {
+      const r = await fetch('/api/vote/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ president: pres, board, ...(code ? { code } : {}) }) });
+      if (r.ok) { setPres(null); setBoard([]); setPhase('done'); } else setErr((await r.json().catch(() => ({}))).error ?? 'Error');
+    } catch { setErr(t('Network problem. Please try again.', 'เครือข่ายมีปัญหา กรุณาลองอีกครั้ง')); }
     setBusy(false);
   }
-  const H = ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>;
+  const byId = (id: number) => [...presidents, ...pool].find(c => c.id === id)!;
+  const Card = ({ c, kind, on, off, onClick }: { c: C; kind: 'radio' | 'checkbox'; on: boolean; off?: boolean; onClick: () => void }) => <div>
+    <label className="opt" style={off ? { opacity: 0.45 } : undefined}><input type={kind} checked={on} disabled={off} onChange={onClick} /><span className="ph sm"><Av c={c} /></span><b className="g">{c.name}</b></label>
+    <details><summary>{t('Details', 'รายละเอียด')}</summary><p>{c.bio}</p><p>{c.manifesto}</p></details></div>;
 
-  if (phase === 'init') return <p className="ok">{t('Preparing your ballot…', 'กำลังเตรียมบัตรเลือกตั้ง…')}</p>;
-  if (phase === 'signin' || phase === 'sent') return <div><H>{t('Sign in to vote', 'เข้าสู่ระบบเพื่อโหวต')}</H>
-    {phase === 'sent' ? <div className="note">{t('If this email is on the voter list, a sign-in link is on its way. Check your inbox and spam folder.', 'หากอีเมลนี้อยู่ในรายชื่อผู้มีสิทธิ์ ระบบจะส่งลิงก์เข้าสู่ระบบให้ ตรวจสอบกล่องจดหมายและสแปม')}</div> :
-      <div className="fld"><label>{t('Your email', 'อีเมลของคุณ')}<input type="email" inputMode="email" autoComplete="email" value={email} onChange={x => setEmail(x.target.value)} placeholder="name@example.com" /></label>
-        <div className="bar"><button className="btn" onClick={sendLink} disabled={busy || !email.includes('@')}>{t('Send sign-in link', 'ส่งลิงก์เข้าสู่ระบบ')}</button></div></div>}</div>;
-  if (phase === 'lost') return <div className="note r">{t('A ballot was already issued to this account. If you have voted, thank you. If you started on another device or browser, continue there.', 'บัญชีนี้ได้รับบัตรเลือกตั้งแล้ว หากโหวตเสร็จแล้ว ขอบคุณค่ะ หากเริ่มโหวตบนอุปกรณ์หรือเบราว์เซอร์อื่น กรุณากลับไปทำต่อที่นั่น')}</div>;
-  if (phase === 'error') return <div className="note r"><b>{err}</b></div>;
-  if (phase === 'done') return <div className="ok"><BallotBox mode="once" /><h2 style={{ border: 0, padding: 0, marginTop: 14 }}>{t('Your ballot is in the box', 'บัตรเลือกตั้งของคุณอยู่ในหีบแล้ว')}</h2>
-    <p style={{ color: 'var(--muted)' }}>{t('Thank you for voting.', 'ขอบคุณที่ใช้สิทธิ์ค่ะ')}</p></div>;
+  if (phase === 'welcome') return <div className="ok big"><BallotBox mode="loop" /><h2 style={{ border: 0, padding: 0, marginTop: 14 }}>{t('Ready to vote', 'พร้อมโหวต')}</h2>
+    <button className="btn" onClick={() => { touched.current = Date.now(); setPhase('president'); }}>{t('Start voting', 'เริ่มโหวต')}</button>
+    <p style={{ color: 'var(--muted)', marginTop: 12 }}>{t('One ballot per person. Ask the staff if you need help.', 'หนึ่งคนหนึ่งบัตร หากต้องการความช่วยเหลือ สอบถามเจ้าหน้าที่ได้ค่ะ')}</p></div>;
 
-  if (phase === 'review') return <div><H>{t('Confirm your vote', 'ยืนยันการเลือก')}</H>
-    {sel.map((id, k) => <div className="opt" style={{ cursor: 'default' }} key={k}><span className="ph sm"><Av c={byId(id)} /></span><span><small>{pn(positions[k])}</small><b>{byId(id).name}</b></span></div>)}
+  if (phase === 'done') return <div className="ok big"><BallotBox mode="once" /><h2 style={{ border: 0, padding: 0, marginTop: 14 }}>{t('Your ballot is in the box', 'บัตรเลือกตั้งของคุณอยู่ในหีบแล้ว')}</h2>
+    <p style={{ color: 'var(--muted)' }}>{code ? t('Thank you for voting. You can close this page.', 'ขอบคุณที่ใช้สิทธิ์ ปิดหน้านี้ได้เลยค่ะ') : t('Thank you for voting. This screen will reset for the next voter.', 'ขอบคุณที่ใช้สิทธิ์ หน้าจอจะรีเซ็ตสำหรับคนถัดไปเอง')}</p>
+    {!code && <button className="btn alt" onClick={reset}>{t('Next voter', 'ผู้โหวตคนถัดไป')}</button>}</div>;
+
+  if (phase === 'president') return <div className="big"><div className="prog">{t('Step 1 of 2', 'ขั้นที่ 1 จาก 2')}</div>
+    <h2>{t('Choose your President', 'เลือกประธาน')}<small>{t('Choose one', 'เลือก 1 คน')}</small></h2>
+    {presidents.map(c => <Card key={c.id} c={c} kind="radio" on={pres === c.id} onClick={() => { setPres(c.id); setBoard(b => b.filter(x => x !== c.id)); }} />)}
+    <div className="bar">{!code && <button className="btn alt" onClick={reset}>{t('Cancel', 'ยกเลิก')}</button>}<button className="btn" disabled={pres === null} onClick={() => setPhase('board')}>{t('Next', 'ถัดไป')}</button></div></div>;
+
+  const list = pool.filter(c => c.id !== pres);
+  if (phase === 'board') return <div className="big"><div className="prog">{t('Step 2 of 2', 'ขั้นที่ 2 จาก 2')}</div>
+    <h2>{t('Choose board members', 'เลือกสมาชิกบอร์ด')}<small>{t(`Choose exactly ${seats} · selected ${board.length}`, `เลือก ${seats} คน · เลือกแล้ว ${board.length}`)}</small></h2>
+    {list.map(c => <Card key={c.id} c={c} kind="checkbox" on={board.includes(c.id)} off={!board.includes(c.id) && board.length >= seats} onClick={() => setBoard(b => b.includes(c.id) ? b.filter(x => x !== c.id) : b.length < seats ? [...b, c.id] : b)} />)}
+    <div className="bar"><button className="btn alt" onClick={() => setPhase('president')}>{t('Back', 'ย้อนกลับ')}</button><button className="btn" disabled={board.length !== seats} onClick={() => setPhase('review')}>{t('Review', 'ตรวจสอบ')}</button></div></div>;
+
+  return <div className="big"><h2>{t('Confirm your vote', 'ยืนยันการเลือก')}</h2>
+    {pres !== null && <div className="opt" style={{ cursor: 'default' }}><span className="ph sm"><Av c={byId(pres)} /></span><span><small>{t('President', 'ประธาน')}</small><b>{byId(pres).name}</b></span></div>}
+    {board.map(id => <div className="opt" style={{ cursor: 'default' }} key={id}><span className="ph sm"><Av c={byId(id)} /></span><span><small>{t('Board member', 'สมาชิกบอร์ด')}</small><b>{byId(id).name}</b></span></div>)}
     <div className="note r">{t('You cannot change your vote after submitting.', 'เมื่อส่งแล้วจะแก้ไขไม่ได้')}</div>
-    {err && <div className="note r">{err}</div>}
-    <div className="bar"><button className="btn alt" onClick={() => setPhase('vote')} disabled={busy}>{t('Back', 'กลับไปแก้ไข')}</button>
-      <button className="btn" onClick={submit} disabled={busy}>{t('Submit ballot', 'ส่งบัตรเลือกตั้ง')}</button></div></div>;
-
-  const pos = positions[step], taken = sel.slice(0, step);
-  return <div>
-    <div className="prog">{t('Step', 'ขั้นที่')} {step + 1} {t('of', 'จาก')} {N}<div className="trk"><i style={{ width: `${((step + 1) / N) * 100}%`, background: 'var(--green)' }} /></div></div>
-    <h2>{t('Vote for ', 'โหวตเลือก')}{pn(pos)}<small>{t('Choose one candidate', 'เลือกผู้สมัคร 1 คน')}</small></h2>
-    {candidates.filter(c => !taken.includes(c.id)).map(c => <div key={c.id}>
-      <label className="opt"><input type="radio" name="p" checked={sel[step] === c.id} onChange={() => { const s = sel.slice(0, step); s[step] = c.id; setSel(s); }} />
-        <span className="ph sm"><Av c={c} /></span><b className="g">{c.name}</b></label>
-      <details><summary>{t('Details', 'รายละเอียด')}</summary><p>{c.bio}</p><p>{c.manifesto}</p></details></div>)}
-    <div className="bar">{step > 0 && <button className="btn alt" onClick={() => setStep(step - 1)}>{t('Back', 'ย้อนกลับ')}</button>}
-      <button className="btn" disabled={sel[step] === undefined} onClick={() => step < N - 1 ? setStep(step + 1) : setPhase('review')}>
-        {step < N - 1 ? t('Next vote', 'โหวตตำแหน่งถัดไป') : t('Review', 'ตรวจสอบก่อนส่ง')}</button></div></div>;
+    {err && <div className="note r" role="alert">{err}</div>}
+    <div className="bar"><button className="btn alt" onClick={() => setPhase('board')} disabled={busy}>{t('Back', 'กลับไปแก้ไข')}</button><button className="btn" onClick={submit} disabled={busy}>{busy ? t('Sending…', 'กำลังส่ง…') : t('Submit ballot', 'ส่งบัตรเลือกตั้ง')}</button></div></div>;
 }

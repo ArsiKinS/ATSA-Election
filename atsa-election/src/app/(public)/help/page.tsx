@@ -2,10 +2,10 @@ import { Bi } from '@/components/Lang';
 export default function Help() {
   return <div className="help"><h2><Bi en="How voting works" th="วิธีการโหวต" /></h2>
     <ul>
-      <li><Bi en="Only members on the voter list can vote, and each person can vote once." th="เฉพาะสมาชิกที่อยู่ในรายชื่อเท่านั้นที่โหวตได้ และโหวตได้คนละหนึ่งครั้ง" /></li>
-      <li><Bi en="Enter your email. We send you a one-time sign-in link." th="กรอกอีเมลของคุณ ระบบจะส่งลิงก์เข้าสู่ระบบแบบใช้ครั้งเดียวให้" /></li>
-      <li><Bi en="Vote one position at a time, starting with President. Someone you already chose is not shown again." th="โหวตทีละตำแหน่ง เริ่มจากประธาน ผู้สมัครที่คุณเลือกไปแล้วจะไม่แสดงซ้ำ" /></li>
-      <li><Bi en="Your email is used only to check you are eligible and to stop double voting. Your ballot is stored separately, without your email." th="อีเมลใช้เพื่อตรวจสิทธิ์และกันการโหวตซ้ำเท่านั้น บัตรเลือกตั้งถูกเก็บแยกต่างหาก ไม่ผูกกับอีเมลของคุณ" /></li>
-      <li><Bi en="Results stay hidden until the official announcement." th="ผลคะแนนจะซ่อนไว้จนถึงเวลาประกาศอย่างเป็นทางการ" /></li>
+      <li><Bi en="Voting takes place on the computer at the polling station. Show your ID to the staff, who check your name on the voter list." th="การโหวตทำที่คอมพิวเตอร์ ณ จุดเลือกตั้ง แสดงบัตรให้เจ้าหน้าที่ตรวจชื่อในรายชื่อผู้มีสิทธิ์" /></li>
+      <li><Bi en="Choose one President, then choose your board members. Review your choices and press Submit." th="เลือกประธาน 1 คน แล้วเลือกสมาชิกบอร์ด ตรวจสอบแล้วกดส่ง" /></li>
+      <li><Bi en="Your ballot has no name, email or time stored with it, so nobody can tell who you voted for." th="บัตรของคุณไม่มีชื่อ อีเมล หรือเวลาเก็บไว้ จึงไม่มีใครรู้ว่าคุณเลือกใคร" /></li>
+      <li><Bi en="The screen clears for the next voter after you submit." th="หลังส่งแล้ว หน้าจอจะล้างข้อมูลสำหรับผู้โหวตคนถัดไป" /></li>
+      <li><Bi en="Only the President, the Assistant Secretary and the board members are announced. Vote counts stay with the election committee." th="ประกาศเฉพาะประธาน ผู้ช่วยเลขานุการ และสมาชิกบอร์ด คะแนนอยู่กับคณะกรรมการจัดการเลือกตั้งเท่านั้น" /></li>
     </ul></div>;
 }

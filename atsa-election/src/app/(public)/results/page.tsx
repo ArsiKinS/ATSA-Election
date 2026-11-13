@@ -2,26 +2,24 @@ import { Bi } from '@/components/Lang';
 import { fmtMYT, getElection, resultsVisible } from '@/lib/election';
 import { tally } from '@/lib/tally';
 
+// Public results show WHO won, never numbers or percentages (those are in the admin area).
 export default async function Results() {
   const e = await getElection();
   if (!e) return <div className="note r">The election is not set up yet.</div>;
-  // Nothing is queried or sent to the browser unless results are published.
   if (!resultsVisible(e)) return <div className="ok"><h2 style={{ border: 0, padding: 0 }}><Bi en="The official results will be announced soon." th="ผลการเลือกตั้งอย่างเป็นทางการจะประกาศเร็ว ๆ นี้" /></h2>
     <p style={{ color: 'var(--muted)' }}><Bi en={`Announcement: ${fmtMYT(e.results_at)}`} th={`ประกาศผล: ${fmtMYT(e.results_at)}`} /></p></div>;
-  const t = await tally(), pct = (a: number, b: number) => (b ? ((a / b) * 100).toFixed(1) : '0.0');
+  const { cands, outcome: o } = await tally(), by = (id: number) => cands.find(c => c.id === id)!;
+  const Person = ({ id, role, first }: { id: number; role: React.ReactNode; first?: boolean }) => { const c = by(id); return <div className={`rk${first ? ' first' : ''}`}>
+    <span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</span><div className="g"><b>{c.name}</b><small>{role}</small></div></div>; };
   return <>
-    <h2><Bi en="Results" th="ผลการเลือกตั้ง" /></h2>
-    <div className="stats"><div><b>{t.ballots}</b><small><Bi en="Ballots cast" th="บัตรที่ส่งแล้ว" /></small></div><div><b>{pct(t.ballots, t.eligible)}%</b><small><Bi en="Turnout" th="ผู้มาใช้สิทธิ์" /></small></div></div>
-    {t.rounds.map(r => <section key={r.position.id}>
-      <h2><Bi en={r.position.name_en} th={r.position.name_th || r.position.name_en} /></h2>
-      {r.status === 'tie' && <div className="note r"><Bi en="Tie: the committee will decide before the next positions are counted." th="คะแนนเท่ากัน คณะกรรมการจะตัดสินก่อนนับตำแหน่งถัดไป" /></div>}
-      {r.status === 'noVotes' && <div className="note r"><Bi en="No valid votes for this position." th="ไม่มีคะแนนที่ใช้ได้สำหรับตำแหน่งนี้" /></div>}
-      {r.status === 'pending' ? <div className="note"><Bi en="Waiting for the previous position to be settled." th="รอการตัดสินตำแหน่งก่อนหน้า" /></div> :
-        r.rows.map(c => <div key={c.id} className={`rk${r.winner === c.id ? ' first' : ''}`}>
-          <span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</span>
-          <div className="g"><b>{c.name}{r.winner === c.id ? ' ★' : ''}</b><div className="trk"><i style={{ width: `${r.rows[0].votes ? (c.votes / r.rows[0].votes) * 100 : 0}%`, background: r.winner === c.id ? 'var(--red)' : 'var(--navy)' }} /></div></div>
-          <div className="v"><b>{c.votes}</b><small>{pct(c.votes, r.valid)}%</small></div></div>)}
-    </section>)}
-    <div className="bar"><a className="btn alt" href="/api/results/csv" download><Bi en="Download CSV" th="ดาวน์โหลด CSV" /></a></div>
+    <h2><Bi en="President" th="ประธาน" /></h2>
+    {o.president.status === 'won' && <Person id={o.president.winner!} first role={<Bi en="President" th="ประธาน" />} />}
+    {o.president.status === 'tie' && <div className="note r"><Bi en="Tie: the committee will decide." th="คะแนนเท่ากัน คณะกรรมการจะตัดสิน" /></div>}
+    {o.president.status === 'none' && <div className="note r"><Bi en="No valid votes." th="ไม่มีคะแนนที่ใช้ได้" /></div>}
+    {o.assistant && <><h2><Bi en="Assistant Secretary" th="ผู้ช่วยเลขานุการ" /></h2><Person id={o.assistant} role={<Bi en="Assistant Secretary" th="ผู้ช่วยเลขานุการ" />} /></>}
+    <h2><Bi en="Board members" th="สมาชิกบอร์ด" /></h2>
+    {o.board.members.map(id => <Person key={id} id={id} role={<Bi en="Board member" th="สมาชิกบอร์ด" />} />)}
+    {o.board.status === 'tie' && <div className="note r"><Bi en="Tie for the last board seat: the committee will decide." th="คะแนนเท่ากันในที่นั่งบอร์ดสุดท้าย คณะกรรมการจะตัดสิน" /></div>}
+    {o.board.status === 'short' && <div className="note r"><Bi en="Not enough valid votes to fill every board seat." th="คะแนนที่ใช้ได้ไม่พอสำหรับที่นั่งบอร์ดทุกที่" /></div>}
   </>;
 }
