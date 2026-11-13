@@ -1,1 +1,0 @@
-export { Bi } from './Lang';
