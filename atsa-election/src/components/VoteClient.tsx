@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import BallotBox from './BallotBox';
 import { useT } from './Lang';
-type C = { id: number; name: string; photo: string | null; bio: string; manifesto: string };
+import { CandidateSheet } from './CandidateGrid';
+type C = { id: number; name: string; photo: string | null; bio: string; manifesto: string; no?: number };
 type Phase = 'welcome' | 'president' | 'board' | 'review' | 'done';
 const Av = ({ c }: { c: C }) => c.photo ? <img src={c.photo} alt="" /> : <>{c.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</>;
 
@@ -10,7 +11,7 @@ const Av = ({ c }: { c: C }) => c.photo ? <img src={c.photo} alt="" /> : <>{c.na
 // Nothing is kept after a ballot is submitted, and an unfinished ballot is cleared after 90 seconds without touches.
 export default function VoteClient({ presidents, pool, seats, code }: { presidents: C[]; pool: C[]; seats: number; code?: string }) {
   const t = useT(), [phase, setPhase] = useState<Phase>(code ? 'president' : 'welcome'), [pres, setPres] = useState<number | null>(null), [board, setBoard] = useState<number[]>([]);
-  const [busy, setBusy] = useState(false), [err, setErr] = useState(''), touched = useRef(Date.now());
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(''), touched = useRef(Date.now()), [sheet, setSheet] = useState<C | null>(null);
   const reset = () => { setPres(null); setBoard([]); setErr(''); setPhase('welcome'); };
   useEffect(() => {
     const bump = () => { touched.current = Date.now(); };
@@ -30,9 +31,9 @@ export default function VoteClient({ presidents, pool, seats, code }: { presiden
     setBusy(false);
   }
   const byId = (id: number) => [...presidents, ...pool].find(c => c.id === id)!;
-  const Card = ({ c, kind, on, off, onClick }: { c: C; kind: 'radio' | 'checkbox'; on: boolean; off?: boolean; onClick: () => void }) => <div>
-    <label className="opt" style={off ? { opacity: 0.45 } : undefined}><input type={kind} checked={on} disabled={off} onChange={onClick} /><span className="ph sm"><Av c={c} /></span><b className="g">{c.name}</b></label>
-    <details><summary>{t('Details', 'รายละเอียด')}</summary><p>{c.bio}</p><p>{c.manifesto}</p></details></div>;
+  const Card = ({ c, kind, on, off, onClick }: { c: C; kind: 'radio' | 'checkbox'; on: boolean; off?: boolean; onClick: () => void }) => <label className="opt" style={off ? { opacity: 0.45 } : undefined}><input type={kind} checked={on} disabled={off} onChange={onClick} /><span className="ph sm"><Av c={c} /></span>
+    <span className="g"><b>{c.name}</b><small>{t('No.', 'เบอร์')} {c.no}</small></span>
+    <button type="button" className="lk" onClick={e => { e.preventDefault(); e.stopPropagation(); setSheet(c); }}>{t('Details', 'รายละเอียด')}</button></label>;
 
   if (phase === 'welcome') return <div className="ok big"><BallotBox mode="loop" /><h2 style={{ border: 0, padding: 0, marginTop: 14 }}>{t('Ready to vote', 'พร้อมโหวต')}</h2>
     <button className="btn" onClick={() => { touched.current = Date.now(); setPhase('president'); }}>{t('Start voting', 'เริ่มโหวต')}</button>
@@ -43,15 +44,15 @@ export default function VoteClient({ presidents, pool, seats, code }: { presiden
     {!code && <button className="btn alt" onClick={reset}>{t('Next voter', 'ผู้โหวตคนถัดไป')}</button>}</div>;
 
   if (phase === 'president') return <div className="big"><div className="prog">{t('Step 1 of 2', 'ขั้นที่ 1 จาก 2')}</div>
-    <h2>{t('Choose your President', 'เลือกประธาน')}<small>{t('Choose one', 'เลือก 1 คน')}</small></h2>
+    <h2>{t('Vote for President', 'โหวตเลือกประธาน')}<small>{t('Choose one', 'เลือก 1 คน')}</small></h2>
     {presidents.map(c => <Card key={c.id} c={c} kind="radio" on={pres === c.id} onClick={() => { setPres(c.id); setBoard(b => b.filter(x => x !== c.id)); }} />)}
-    <div className="bar">{!code && <button className="btn alt" onClick={reset}>{t('Cancel', 'ยกเลิก')}</button>}<button className="btn" disabled={pres === null} onClick={() => setPhase('board')}>{t('Next', 'ถัดไป')}</button></div></div>;
+    <div className="bar">{!code && <button className="btn alt" onClick={reset}>{t('Cancel', 'ยกเลิก')}</button>}<button className="btn" disabled={pres === null} onClick={() => setPhase('board')}>{t('Next', 'ถัดไป')}</button></div>{sheet && <CandidateSheet c={sheet} onClose={() => setSheet(null)} />}</div>;
 
   const list = pool.filter(c => c.id !== pres);
   if (phase === 'board') return <div className="big"><div className="prog">{t('Step 2 of 2', 'ขั้นที่ 2 จาก 2')}</div>
-    <h2>{t('Choose board members', 'เลือกสมาชิกบอร์ด')}<small>{t(`Choose exactly ${seats} · selected ${board.length}`, `เลือก ${seats} คน · เลือกแล้ว ${board.length}`)}</small></h2>
+    <h2>{t('Vote for the Board', 'โหวตเลือกสมาชิกบอร์ด')}<small>{t(`Choose exactly ${seats} · selected ${board.length}`, `เลือก ${seats} คน · เลือกแล้ว ${board.length}`)}</small></h2>
     {list.map(c => <Card key={c.id} c={c} kind="checkbox" on={board.includes(c.id)} off={!board.includes(c.id) && board.length >= seats} onClick={() => setBoard(b => b.includes(c.id) ? b.filter(x => x !== c.id) : b.length < seats ? [...b, c.id] : b)} />)}
-    <div className="bar"><button className="btn alt" onClick={() => setPhase('president')}>{t('Back', 'ย้อนกลับ')}</button><button className="btn" disabled={board.length !== seats} onClick={() => setPhase('review')}>{t('Review', 'ตรวจสอบ')}</button></div></div>;
+    <div className="bar"><button className="btn alt" onClick={() => setPhase('president')}>{t('Back', 'ย้อนกลับ')}</button><button className="btn" disabled={board.length !== seats} onClick={() => setPhase('review')}>{t('Review', 'ตรวจสอบ')}</button></div>{sheet && <CandidateSheet c={sheet} onClose={() => setSheet(null)} />}</div>;
 
   return <div className="big"><h2>{t('Confirm your vote', 'ยืนยันการเลือก')}</h2>
     {pres !== null && <div className="opt" style={{ cursor: 'default' }}><span className="ph sm"><Av c={byId(pres)} /></span><span><small>{t('President', 'ประธาน')}</small><b>{byId(pres).name}</b></span></div>}

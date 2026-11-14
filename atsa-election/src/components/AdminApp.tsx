@@ -43,7 +43,7 @@ export default function AdminApp() {
       <button className="btn alt sm" style={{ marginLeft: 'auto' }} onClick={async () => { await post({ action: 'logout' }); location.href = '/admin/login'; }}>Sign out</button></div>
     {msg && <div className={'note' + (msg.ok ? '' : ' r')} role="status">{msg.t}</div>}
     <Overview s={s} act={act} can={can} />
-    {can('kiosk:open') && <Kiosk act={act} />}
+    {can('kiosk:open') && <Kiosk s={s} act={act} reload={load} setMsg={setMsg} />}
     {can('remote:manage') && <Remote s={s} reload={load} setMsg={setMsg} />}
     {s.results && <Results r={s.results} />}
     {can('election:edit') && <ElectionForm key={JSON.stringify(s.election).length} e={s.election} act={act} />}
@@ -91,10 +91,27 @@ function Remote({ s, reload, setMsg }: { s: any; reload: () => Promise<void>; se
   </div>;
 }
 
-function Kiosk({ act }: { act: Act }) {
-  return <div className="panel"><h2>Polling station computer</h2>
-    <p style={{ margin: '8px 0' }}>Use this on the computer at the polling station. It makes <b>this computer</b> the only one that can vote, and signs you out of the admin area so voters cannot reach it. To stop it later, sign in to admin again on this same computer and press “Stop voting on this computer”.</p>
-    <button className="btn" onClick={async () => { if (!confirm('Open the ballot on THIS computer? You will be signed out of admin here.')) return; const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'kiosk.open' }) }); if (r.ok) location.href = '/vote'; else alert((await r.json().catch(() => ({}))).error ?? 'Error'); }}>Open ballot on this computer</button>
+function Kiosk({ s, act, reload, setMsg }: { s: any; act: Act; reload: () => Promise<void>; setMsg: (m: { ok: boolean; t: string }) => void }) {
+  const [n, setN] = useState(5), [links, setLinks] = useState<string[]>([]), [busy, setBusy] = useState(false), k = s.kiosk ?? { issued: 0, used: 0, missing: false };
+  async function call(body: unknown) {
+    setBusy(true); const r = await post(body), j = await r.json().catch(() => ({})); setBusy(false);
+    if (!r.ok) { setMsg({ ok: false, t: j.error || 'Error' }); return null; }
+    await reload(); return j;
+  }
+  return <div className="panel"><h2>Polling station computers</h2>
+    {k.missing ? <p className="note r">The database needs one more step: run <b>migrate-v4.sql</b> in the Neon SQL Editor, then refresh this page.</p> : <>
+      <p style={{ margin: '8px 0' }}>Create one link for each voting computer. Send each link to the person who sets up that computer. Opening the link and pressing one button turns that computer into a voting computer, <b>with no admin login on it</b>. Each link works once. <b>Created {k.issued} · used {k.used}</b></p>
+      <div className="fld"><label>How many links<input type="number" min={1} max={20} value={n} onChange={x => setN(Math.max(1, Math.min(20, +x.target.value || 1)))} /></label></div>
+      <button className="btn" disabled={busy} onClick={async () => { const j = await call({ action: 'kiosk.links', count: n }); if (j) setLinks(j.codes.map((c: string) => `${location.origin}/kiosk?code=${c}`)); }}>Create links</button>
+      <button className="btn alt" disabled={busy || k.issued === k.used} onClick={async () => { if (confirm('Cancel every link that has not been used yet?') && (await call({ action: 'kiosk.links_cancel' }))) { setLinks([]); setMsg({ ok: true, t: 'Unused links cancelled' }); } }}>Cancel unused links</button>
+      <button className="btn alt" disabled={busy} onClick={async () => { if (confirm('Deactivate EVERY polling-station computer? They will stop accepting ballots until they are set up again with new links.') && (await call({ action: 'kiosk.revoke_all' }))) setMsg({ ok: true, t: 'All polling-station computers deactivated' }); }}>Deactivate all computers</button>
+      {links.length > 0 && <div style={{ marginTop: 12 }}>
+        <p className="note r"><b>Copy these now.</b> They are shown only once and are not saved. Send one link to each computer. Do not post them publicly.</p>
+        <pre style={{ fontSize: 14, lineHeight: 1.7, userSelect: 'all', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{links.join('\n\n')}</pre>
+        <button className="btn alt sm" onClick={() => navigator.clipboard?.writeText(links.join('\n')).then(() => setMsg({ ok: true, t: 'Links copied' }))}>Copy all</button></div>}
+    </>}
+    <p style={{ margin: '16px 0 8px', color: 'var(--muted)' }}>Or set up the computer you are using right now (you will be signed out of admin on it). To stop it later, sign in again on this same computer and press “Stop voting on this computer”.</p>
+    <button className="btn alt" onClick={async () => { if (!confirm('Open the ballot on THIS computer? You will be signed out of admin here.')) return; const r = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'kiosk.open' }) }); if (r.ok) location.href = '/vote'; else alert((await r.json().catch(() => ({}))).error ?? 'Error'); }}>Open ballot on this computer</button>
     <button className="btn alt" onClick={() => act({ action: 'kiosk.close' }, 'This computer can no longer vote')}>Stop voting on this computer</button></div>;
 }
 
@@ -131,9 +148,11 @@ function ElectionForm({ e, act }: { e: any; act: Act }) {
 function Candidates({ s, act, locked }: { s: any; act: Act; locked: boolean }) {
   const blank = { id: undefined as number | undefined, name: '', bio: '', manifesto: '', photo: null as string | null, for_president: false, for_board: true };
   const [f, setF] = useState<any>(blank);
+  const nums = (() => { let p = 0, b = 0; return s.candidates.map((c: any) => ({ p: c.for_president ? ++p : 0, b: c.for_board ? ++b : 0 })); })(); // numbers follow the order candidates were added
   return <div className="panel fld"><h2>Candidates ({s.candidates.length})</h2>
-    {s.candidates.map((c: any) => <div key={c.id} className="rk"><span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name[0]}</span>
-      <div className="g"><b>{c.name}</b><br />{c.for_president && <span className="chip">President</span>} {c.for_board && <span className="chip">Board</span>}</div>
+    <p className="note">Numbers follow the order you add candidates. Add the presidential candidates first (the first is No. 1, the second No. 2), then the board candidates, numbered 1, 2, 3… in the order added.</p>
+    {s.candidates.map((c: any, i: number) => <div key={c.id} className="rk"><span className="ph sm">{c.photo ? <img src={c.photo} alt="" /> : c.name[0]}</span>
+      <div className="g"><b>{c.name}</b><br />{c.for_president && <span className="chip">President No. {nums[i].p}</span>} {c.for_board && <span className="chip">Board No. {nums[i].b}</span>}</div>
       <button className="btn alt sm" disabled={locked} onClick={() => setF(c)}>Edit</button>
       <button className="btn alt sm" disabled={locked} onClick={() => confirm(`Delete ${c.name}?`) && act({ action: 'candidate.delete', id: c.id })}>Delete</button></div>)}
     <h2 style={{ fontSize: 16 }}>{f.id ? 'Edit candidate' : 'Add candidate'}</h2>

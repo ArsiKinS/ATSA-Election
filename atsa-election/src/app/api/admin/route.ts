@@ -19,6 +19,9 @@ const A = z.discriminatedUnion('action', [
   z.object({ action: z.literal('candidate.delete'), id: z.number().int() }),
   z.object({ action: z.literal('kiosk.open') }),
   z.object({ action: z.literal('kiosk.close') }),
+  z.object({ action: z.literal('kiosk.links'), count: z.number().int().min(1).max(20) }),
+  z.object({ action: z.literal('kiosk.links_cancel') }),
+  z.object({ action: z.literal('kiosk.revoke_all') }),
   z.object({ action: z.literal('remote.generate'), count: z.number().int().min(1).max(50) }),
   z.object({ action: z.literal('remote.cancel') }),
   z.object({ action: z.literal('results.verify') }),
@@ -28,7 +31,7 @@ const A = z.discriminatedUnion('action', [
   z.object({ action: z.literal('logout') }),
 ]);
 const NEED: Record<string, string> = {
-  'election.save': 'election:edit', 'candidate.save': 'candidates:edit', 'candidate.delete': 'candidates:edit', 'kiosk.open': 'kiosk:open', 'kiosk.close': 'kiosk:open', 'remote.generate': 'remote:manage', 'remote.cancel': 'remote:manage',
+  'election.save': 'election:edit', 'candidate.save': 'candidates:edit', 'candidate.delete': 'candidates:edit', 'kiosk.open': 'kiosk:open', 'kiosk.close': 'kiosk:open', 'kiosk.links': 'kiosk:open', 'kiosk.links_cancel': 'kiosk:open', 'kiosk.revoke_all': 'kiosk:open', 'remote.generate': 'remote:manage', 'remote.cancel': 'remote:manage',
   'results.verify': 'results:publish', 'results.publish': 'results:publish', 'admin.create': 'admins:manage', 'admin.delete': 'admins:manage',
 };
 const notStarted = (e: Election) => { if (new Date() >= e.open_at) throw new HttpError(409, 'Voting has started. This can no longer be changed.'); };
@@ -36,7 +39,7 @@ const ballotCount = async () => (await q<{ n: number }>('SELECT count(*)::int n 
 
 export const GET = handler(async () => {
   const me = await requireAdmin('stats:view'), perms = PERMS[me.role];
-  const [e, ballots, candidates, admins, all, qr, remote] = await Promise.all([
+  const [e, ballots, candidates, admins, all, qr, remote, links] = await Promise.all([
     getElection(),
     ballotCount(),
     q('SELECT id,name,bio,manifesto,photo,for_president,for_board FROM candidates ORDER BY sort,id'),
@@ -44,11 +47,13 @@ export const GET = handler(async () => {
     perms.includes('audit:view') ? q<{ id: number; at: Date; actor: string; action: string; details: string; prev_hash: string; hash: string }>('SELECT * FROM audit_log ORDER BY id') : Promise.resolve(undefined),
     process.env.APP_URL ? QRCode.toString(process.env.APP_URL + '/', { type: 'svg', margin: 1 }) : Promise.resolve(undefined),
     q<{ issued: number; used: number }>('SELECT count(*)::int issued, (count(*) FILTER (WHERE used))::int used FROM remote_codes').then(r => ({ ...r[0], missing: false })).catch(() => ({ issued: 0, used: 0, missing: true })), // missing = migrate-v3.sql not run yet
+    q<{ issued: number; used: number }>('SELECT count(*)::int issued, (count(*) FILTER (WHERE used))::int used FROM kiosk_links').then(r => ({ ...r[0], missing: false })).catch(() => ({ issued: 0, used: 0, missing: true })), // missing = migrate-v4.sql not run yet
   ]);
   if (!e) throw new HttpError(404, 'No election found. Run the first-time setup.');
   const out: Record<string, unknown> = { me: { email: me.email, role: me.role, perms }, election: e, status: statusOf(e), stats: { ballots, max_ballots: e.max_ballots }, candidates };
   if (qr) out.qr = qr;
   if (perms.includes('remote:manage')) out.remote = remote;
+  if (perms.includes('kiosk:open')) out.kiosk = links;
   if (admins) out.admins = admins;
   if (perms.includes('results:view') && new Date() >= e.close_at) out.results = await tally(); // numbers: admins only, after voting closes
   if (all) {
@@ -87,9 +92,25 @@ export const POST = handler(async req => {
       break;
     case 'kiosk.open':
       // Turns THIS computer into the polling-station computer, and signs the admin out of it so voters cannot reach the admin area.
-      await setSession('kiosk', {}, 12 * 3600);
+      await setSession('kiosk', { ep: e.kiosk_epoch ?? 0 }, 24 * 3600);
       await clearSession('admin');
       await audit(me.email, 'kiosk.open');
+      break;
+    case 'kiosk.links': {
+      if (new Date() >= e.close_at) throw new HttpError(409, 'Voting has closed');
+      const codes = Array.from({ length: b.count }, newCode);
+      await q('INSERT INTO kiosk_links(code_hash) SELECT unnest($1::text[])', [codes.map(hashCode)]);
+      await audit(me.email, 'kiosk.links', { count: b.count }); // the links themselves are never stored or logged
+      return json({ ok: true, codes }); // shown once
+    }
+    case 'kiosk.links_cancel': {
+      const gone = await q('DELETE FROM kiosk_links WHERE used=false RETURNING code_hash');
+      await audit(me.email, 'kiosk.links_cancel', { cancelled: gone.length });
+      break;
+    }
+    case 'kiosk.revoke_all':
+      await q('UPDATE election SET kiosk_epoch = kiosk_epoch + 1 WHERE id=1');
+      await audit(me.email, 'kiosk.revoke_all');
       break;
     case 'kiosk.close':
       await clearSession('kiosk');

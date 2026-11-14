@@ -56,3 +56,8 @@ CREATE TRIGGER board_ro BEFORE UPDATE OR DELETE ON ballot_board FOR EACH ROW EXE
 -- ONLINE VOTING CODES (for approved members who cannot attend). Only a hash of each code is stored,
 -- never a name, and the ballot table has no link to this table.
 CREATE TABLE IF NOT EXISTS remote_codes (code_hash text PRIMARY KEY, used boolean NOT NULL DEFAULT false);
+
+-- POLLING-STATION COMPUTERS: one-time activation links (only hashes stored) so each voting computer can be set up
+-- without an admin login. kiosk_epoch lets an admin deactivate every polling-station computer at once.
+CREATE TABLE IF NOT EXISTS kiosk_links (code_hash text PRIMARY KEY, used boolean NOT NULL DEFAULT false);
+ALTER TABLE election ADD COLUMN IF NOT EXISTS kiosk_epoch int NOT NULL DEFAULT 0;

@@ -5,6 +5,7 @@ import { getElection, statusOf } from '@/lib/election';
 import { handler, HttpError, json } from '@/lib/http';
 import { getSession } from '@/lib/session';
 import { hashCode } from '@/lib/remote';
+import { isKiosk } from '@/lib/kiosk';
 
 // Ballot from the polling-station computer (activated by an admin) OR from an approved member with a one-time online code.
 // The code is only marked as used; it is not stored with the ballot.
@@ -12,10 +13,10 @@ import { hashCode } from '@/lib/remote';
 const Body = z.object({ president: z.number().int().positive(), board: z.array(z.number().int().positive()).max(30), code: z.string().max(40).optional() });
 export const POST = handler(async req => {
   const { president, board, code } = Body.parse(await req.json());
-  const kiosk = await getSession('kiosk');
-  if (!kiosk && !code) throw new HttpError(403, 'Voting is only available on the polling station computer, or with an online voting code');
   const e = await getElection();
   if (!e || statusOf(e) !== 'open') throw new HttpError(403, 'Voting is not open');
+  const kiosk = await isKiosk(e);
+  if (!kiosk && !code) throw new HttpError(403, 'Voting is only available on the polling station computer, or with an online voting code');
   const cands = await q<{ id: number; for_president: boolean; for_board: boolean }>('SELECT id,for_president,for_board FROM candidates');
   const presidents = new Set(cands.filter(c => c.for_president).map(c => c.id)), boardPool = new Set(cands.filter(c => c.for_board).map(c => c.id));
   const need = Math.min(e.board_seats, boardPool.size);

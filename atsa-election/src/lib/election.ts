@@ -2,7 +2,7 @@ import { q } from './db';
 export type Election = {
   club_name: string; club_short: string; title: string; title_th: string; year: number; description: string; announcement: string;
   color_primary: string; color_secondary: string; color_accent: string; logo_data: string | null;
-  open_at: Date; close_at: Date; results_at: Date; auto_publish: boolean; verified_at: Date | null; published_at: Date | null; board_seats: number; max_ballots: number | null;
+  open_at: Date; close_at: Date; results_at: Date; auto_publish: boolean; verified_at: Date | null; published_at: Date | null; board_seats: number; max_ballots: number | null; kiosk_epoch?: number | null;
 };
 export type Status = 'upcoming' | 'open' | 'closed' | 'results';
 export async function getElection() {

@@ -48,6 +48,8 @@ ok((await fetch(base + '/api/vote/submit', { method: 'POST', headers: { 'Content
 // 4. Retired routes and hidden results
 for (const p of ['/api/auth/request', '/api/vote/credential', '/api/results/csv']) ok((await call(anon, p, p === '/api/results/csv' ? undefined : {})).status === 410, `${p} is retired (410)`);
 ok((await (await call(anon, '/results')).text()).includes('announced soon'), 'public results are hidden before publication');
+const cp = await (await call(anon, '/candidates')).text();
+ok(cp.includes('Candidates for President') && cp.includes('Candidates for the Board') && (cp.match(/class="chip">No\./g) ?? []).length === 9, 'candidates are shown in two sections (President, Board), each numbered in entry order');
 // 5. Anonymity in the database
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL }); await db.connect();
 const cr = (await db.query("SELECT column_name n, data_type t FROM information_schema.columns WHERE table_name IN ('ballots','ballot_board')")).rows;
@@ -59,6 +61,16 @@ const st2 = await (await call((await call(admin, '/api/admin/login', { email: 'a
 ok(st2.results === undefined, 'admin cannot see numbers while voting is open');
 ok(st2.remote?.issued === 2 && st2.remote?.used === 1, 'admin sees only totals: 2 codes issued, 1 used');
 ok((await call(admin, '/api/admin', { action: 'remote.cancel' })).ok && (await call(anon, '/api/vote/code', { code: codes[1] })).status === 403, 'cancelling unused codes invalidates them');
+const kl = await call(admin, '/api/admin', { action: 'kiosk.links', count: 2 }), links: string[] = (await kl.json()).codes ?? [];
+ok(kl.ok && links.length === 2, 'admin creates 2 one-time kiosk links (no admin login needed on the voting computers)');
+const k2 = new Jar();
+ok((await call(k2, '/api/kiosk/activate', { code: 'ZZZZZ-ZZZZZ' })).status === 403, 'a wrong kiosk link is rejected');
+ok((await call(k2, '/api/kiosk/activate', { code: links[0] })).ok && k2.c.has('atsa_kiosk'), 'a kiosk link turns a computer into a polling-station computer');
+ok((await call(new Jar(), '/api/kiosk/activate', { code: links[0] })).status === 403, 'the same kiosk link cannot be used on a second computer');
+ok((await (await call(k2, '/vote')).text()).includes('Start voting'), 'that computer shows the ballot');
+ok((await call(k2, '/api/vote/submit', { president: 2, board: [3, 4, 5] })).status === 409, 'it is accepted as a kiosk (refused only because the ballot limit is reached)');
+ok((await call(admin, '/api/admin', { action: 'kiosk.revoke_all' })).ok, 'admin deactivates all polling-station computers');
+ok((await call(k2, '/api/vote/submit', { president: 2, board: [3, 4, 5] })).status === 403 && (await call(kiosk, '/api/vote/submit', { president: 2, board: [3, 4, 5] })).status === 403, '...and none of them can vote any more');
 const past = (m: number) => new Date(Date.now() - m * 60000).toISOString().replace(/\.\d+Z$/, '+00:00');
 ok((await call(admin, '/api/admin', { ...save, open_at: past(180), close_at: past(1), results_at: new Date(Date.now() + 3600000).toISOString().replace(/\.\d+Z$/, '+00:00') })).ok, 'voting closes (schedule moved)');
 const r = (await (await call(admin, '/api/admin')).json()).results;
@@ -71,6 +83,7 @@ ok((await call(admin, '/api/admin', { action: 'results.publish' })).ok, 'results
 const pub = await (await call(anon, '/results')).text();
 ok(['Candidate 2', 'Candidate 1', 'Candidate 3', 'Candidate 4', 'Candidate 5'].every(n => pub.includes(n)) && !pub.includes('Candidate 6'), 'public sees President, Assistant Secretary and the 3 board members only');
 ok(!/%|votes<|>\d+<\/b><small/.test(pub), 'public results show no numbers or percentages');
+ok(pub.includes('Present on big screen') && pub.includes('To be announced'), 'results page has the big-screen button and a "?" card for the seat the committee decides');
 const audit = (await (await call(admin, '/api/admin')).json()).audit;
 ok(audit.chainOk === true, 'audit log chain is intact');
 await db.end(); process.exit(bad);
