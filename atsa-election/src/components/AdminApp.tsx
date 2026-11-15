@@ -24,6 +24,8 @@ export default function AdminApp() {
     setS(await r.json());
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Live view: re-read the numbers every 10 seconds while this tab is open (never while a save is running).
+  useEffect(() => { const id = setInterval(() => { if (!document.hidden && !lock.current) load(); }, 10000); return () => clearInterval(id); }, [load]);
   const act: Act = async (b, ok = 'Saved') => {
     if (lock.current) return false; // ignore extra clicks while a save is running
     lock.current = true; setBusy(true); setMsg({ ok: true, t: 'Saving… please wait' });
@@ -118,9 +120,10 @@ function Kiosk({ s, act, reload, setMsg }: { s: any; act: Act; reload: () => Pro
 function Results({ r }: { r: any }) {
   const pct = (v: number) => (r.ballots ? ((v / r.ballots) * 100).toFixed(1) : '0.0'), o = r.outcome, nm = (id: number) => r.cands.find((c: any) => c.id === id)?.name;
   const T = ({ rows }: { rows: any[] }) => <table><thead><tr><th>Candidate</th><th>Votes</th><th>% of ballots</th></tr></thead><tbody>{rows.map(x => <tr key={x.id}><td>{x.name}</td><td>{x.votes}</td><td>{pct(x.votes)}%</td></tr>)}</tbody></table>;
-  return <div className="panel"><h2>Results (admins only)</h2>
+  return <div className="panel"><h2>{r.live ? 'Live results (admins only)' : 'Results (admins only)'}</h2>
+    {r.live && <p className="note r"><b>Live count.</b> It updates every 10 seconds while voting is open. It is for admins only: do not share or announce it before the official announcement.</p>}
     <p className="note">Total ballots: <b>{r.ballots}</b></p>
-    <p><b>Outcome:</b> President: {o.president.status === 'won' ? nm(o.president.winner) : o.president.status === 'tie' ? 'TIE, committee decides' : 'no votes'}
+    <p><b>{r.live ? 'Standing right now:' : 'Outcome:'}</b> President: {o.president.status === 'won' ? nm(o.president.winner) : o.president.status === 'tie' ? 'TIE, committee decides' : 'no votes'}
       {o.assistant ? ` · Assistant Secretary: ${nm(o.assistant)}` : ''} · Board: {o.board.members.map(nm).join(', ') || 'none'}{o.board.status === 'tie' ? ` · TIE for the last seat between ${o.board.tied.map(nm).join(', ')}` : ''}</p>
     <h2 style={{ fontSize: 16 }}>President</h2><T rows={o.president.rows} />
     <h2 style={{ fontSize: 16 }}>Board (President and Assistant Secretary not counted)</h2><T rows={o.board.rows} />
