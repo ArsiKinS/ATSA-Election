@@ -24,6 +24,7 @@ export default async function Results() {
     {president ? <Person p={president} first role={<Bi en="President" th="ประธาน" />} /> : <div className="note"><Bi en="The President will be announced by the committee." th="คณะกรรมการจะประกาศประธานภายหลัง" /></div>}
     <h2><Bi en="Board members" th="สมาชิกบอร์ด" /></h2>
     {board.map(b => <Person key={b.id} p={b} role={<Bi en="Board member" th="สมาชิกบอร์ด" />} />)}
+    <div className="rk pend" style={{ animationDelay: `${(n++) * 0.15}s` }}><span className="ph sm q">?</span><div className="g"><b><Bi en="To be announced" th="จะประกาศภายหลัง" /></b><small><Bi en="Assistant Secretary · the committee will decide" th="ผู้ช่วยเลขานุการ · คณะกรรมการจะตัดสิน" /></small></div></div>
     {pendingSeats > 0 && <div className="note"><Bi en={`${pendingSeats} board seat(s) will be decided by the committee.`} th={`ที่นั่งบอร์ด ${pendingSeats} ที่นั่ง คณะกรรมการจะเป็นผู้ตัดสิน`} /></div>}
   </>;
 }
