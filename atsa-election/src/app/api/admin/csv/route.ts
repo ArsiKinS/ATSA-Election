@@ -3,11 +3,11 @@ import { getElection } from '@/lib/election';
 import { handler, HttpError } from '@/lib/http';
 import { tally } from '@/lib/tally';
 
-// Full numbers are for admins only, and only after voting has closed.
+// Full numbers are for admins only (Super Admin, Results Manager). Never public.
 export const GET = handler(async () => {
   await requireAdmin('results:view');
   const e = await getElection();
-  if (!e || new Date() < e.close_at) throw new HttpError(403, 'Numbers are available after voting closes');
+  if (!e) throw new HttpError(404, 'No election found');
   const t = await tally(), pct = (v: number) => (t.ballots ? ((v / t.ballots) * 100).toFixed(1) : '0.0');
   const esc = (s: string) => '"' + s.replaceAll('"', '""') + '"';
   const L = ['contest,candidate,votes,percent_of_ballots'];
