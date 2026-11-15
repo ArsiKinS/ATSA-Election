@@ -55,7 +55,7 @@ export const GET = handler(async () => {
   if (perms.includes('remote:manage')) out.remote = remote;
   if (perms.includes('kiosk:open')) out.kiosk = links;
   if (admins) out.admins = admins;
-  if (perms.includes('results:view') && new Date() >= e.close_at) out.results = await tally(); // numbers: admins only, after voting closes
+  if (perms.includes('results:view')) out.results = { ...(await tally()), live: new Date() < e.close_at }; // numbers: admins only (Super Admin, Results Manager); live while voting is open
   if (all) {
     let prev = '', ok = true;
     for (const r of all) { if (r.prev_hash !== prev || r.hash !== chain(prev, r.at.toISOString(), r.actor, r.action, r.details)) ok = false; prev = r.hash; }
